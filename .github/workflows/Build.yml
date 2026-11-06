@@ -1,0 +1,121 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Versi Godot yang dipakai build. Ganti bila perlu (harus sudah ada di godot-builds). Minimal 4.6.
+  GODOT_VERSION: "4.6.2"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Kalau kamu mengunggah proyek sebagai satu file .zip (paling mudah dari ponsel), zip itu dibuka otomatis.
+      - name: Locate project (unzip if needed)
+        run: |
+          if [ -f project.godot ]; then
+            echo "PROJECT_DIR=." >> "$GITHUB_ENV"
+          else
+            Z=$(ls ./*.zip 2>/dev/null | head -n1 || true)
+            if [ -z "$Z" ]; then echo "::error::project.godot not found and no .zip in repo root"; exit 1; fi
+            rm -rf _proj && mkdir _proj && unzip -q -o "$Z" -d _proj
+            PG=$(find _proj -name project.godot -not -path '*/.godot/*' | head -n1)
+            if [ -z "$PG" ]; then echo "::error::project.godot not found inside $Z"; exit 1; fi
+            echo "PROJECT_DIR=$(dirname "$PG")" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools build-tools;35.0.1 platforms;android-35 cmake;3.10.2.4988404"
+
+      - name: Extra SDK versions (optional)
+        run: |
+          yes | sdkmanager "build-tools;36.0.0" "platforms;android-36" || true
+
+      - name: Install Godot and export templates
+        run: |
+          VER="${GODOT_VERSION}-stable"
+          BASE="https://github.com/godotengine/godot-builds/releases/download/${VER}"
+          echo "Downloading from $BASE"
+          curl -fL --retry 3 -o godot.zip "$BASE/Godot_v${VER}_linux.x86_64.zip"
+          curl -fL --retry 3 -o templates.tpz "$BASE/Godot_v${VER}_export_templates.tpz"
+          unzip -q godot.zip
+          sudo mv "Godot_v${VER}_linux.x86_64" /usr/local/bin/godot
+          sudo chmod +x /usr/local/bin/godot
+          TPL="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$TPL" tpl
+          unzip -q templates.tpz -d tpl
+          mv tpl/templates/* "$TPL/"
+          godot --version
+
+      - name: Godot editor settings (SDK + JDK paths)
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          for f in editor_settings-4.tres editor_settings-4.6.tres editor_settings-4.7.tres; do
+            printf '[gd_resource type="EditorSettings" format=3]\n\n[resource]\nexport/android/android_sdk_path = "%s"\nexport/android/java_sdk_path = "%s"\n' "$SDK" "$JAVA_HOME" > "$HOME/.config/godot/$f"
+          done
+          cat "$HOME/.config/godot/editor_settings-4.tres"
+
+      # Kunci penandatangan disimpan di cache supaya APK berikutnya bisa meng-update yang lama
+      # (tanpa uninstall, jadi lagu & progres tetap aman).
+      - name: Restore signing key cache
+        uses: actions/cache@v4
+        with:
+          path: ~/beatdrop.keystore
+          key: beatdrop-keystore-v1
+
+      - name: Create signing key (first run only)
+        run: |
+          if [ ! -f "$HOME/beatdrop.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/beatdrop.keystore" -alias beatdrop \
+              -keyalg RSA -keysize 2048 -validity 36500 \
+              -storepass beatdrop123 -keypass beatdrop123 \
+              -dname "CN=BeatDrop, OU=Game, O=BeatDrop, L=ID, C=ID"
+          fi
+
+      - name: Import and export APK (release template = fastest)
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: beatdrop
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: beatdrop123
+        run: |
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$HOME/beatdrop.keystore"
+          mkdir -p build
+          godot --headless --path . --import || true
+          godot --headless --path . --import || true
+          godot --headless --path . --export-release "Android" build/BeatDrop.apk
+          ls -la build
+
+      - name: Check APK
+        run: test -s "${PROJECT_DIR}/build/BeatDrop.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BeatDrop-apk
+          path: ${{ env.PROJECT_DIR }}/build/BeatDrop.apk
+
+      # APK juga dipasang di halaman "Releases" (tag "latest") supaya mudah diunduh langsung dari ponsel.
+      - name: Publish to Releases
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: latest
+          name: BeatDrop (latest build)
+          body: "APK build otomatis. Unduh BeatDrop.apk lalu install."
+          files: ${{ env.PROJECT_DIR }}/build/BeatDrop.apk
