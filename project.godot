@@ -1,0 +1,47 @@
+; Engine configuration file.
+; BeatDrop - game ritme dari file MP3 sendiri (Godot 4.6+, GL Compatibility)
+
+config_version=5
+
+[application]
+
+config/name="BeatDrop"
+config/description="Ubah lagu MP3 apa pun menjadi game ritme."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+run/max_fps=60
+run/delta_smoothing=false
+config/icon="res://icon.png"
+boot_splash/bg_color=Color(0.0392157, 0.0313726, 0.0941176, 1)
+boot_splash/show_image=false
+
+[audio]
+
+driver/enable_input=false
+
+[autoload]
+
+Store="*res://scripts/store.gd"
+Sfx="*res://scripts/sfx.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/size/resizable=true
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=4
+window/vsync/vsync_mode=1
+
+[physics]
+
+common/physics_ticks_per_second=60
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/canvas_textures/default_texture_filter=1
+anti_aliasing/quality/msaa_2d=0
+environment/defaults/default_clear_color=Color(0.0392157, 0.0313726, 0.0941176, 1)
